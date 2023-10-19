@@ -333,3 +333,113 @@ function breadcrumb_fix( $string, $arg1 ) {
     return $string;
 }
 add_filter( 'breadcrumb_trail', 'breadcrumb_fix', 10, 3);
+
+// Verifica se l'utente è abilitato a vedere il contenuto della circolare
+function circolare_access($post_ID) {
+
+$is_pubblica = dsi_get_meta("is_pubblica");
+$destinatari_circolari =  dsi_get_meta("destinatari_circolari");
+$user = wp_get_current_user();
+$current_user_roles = (array) $user->roles;
+if($destinatari_circolari == "ruolo"){
+	$allowed_roles = dsi_get_meta("ruoli_circolari"); 
+	$c = array_intersect($allowed_roles,$current_user_roles);
+	if (count($c) > 0) {
+	$can_view = "true";
+	} else {
+	$can_view = "false";
+	}
+}
+if($destinatari_circolari == "gruppo"){
+	$users = array();
+	$gruppi_circolari = dsi_get_meta("gruppi_circolari", '', $post->ID);
+	$users = get_objects_in_term( $gruppi_circolari, "gruppo-utente" );
+	if (in_array($user->ID,$users )) {
+		$can_view = "true";
+	} else {
+		$can_view = "false";
+	}	
+}
+if($destinatari_circolari == "all"){
+	$can_view = "true";
+}
+if ( $is_pubblica == "true" || ($is_pubblica == "false" && is_user_logged_in() &&  $can_view == "true") ){
+	$accesso_circolare = "true";
+	} else {
+	$accesso_circolare = "false";
+}
+return $accesso_circolare;
+}
+
+
+// Add custom checkbox attachment field
+function add_custom_protect_from_public_access_to_attachment_fields_to_edit( $form_fields, $post ) {
+    $protect_from_public_access = (bool) get_post_meta($post->ID, 'protect_from_public_access', true);
+	$ext = dsi_get_option("protect_from_public_access_extensions", "setup");
+	
+    $form_fields['protect_from_public_access'] = array(
+        'label' => 'Proteggi dall\'accesso esterno',
+        'input' => 'html',
+        'html' => '<input type="checkbox" ' . ($ext == "" ? 'disabled' : '') . ' id="attachments-'.$post->ID.'-protect_from_public_access" name="attachments['.$post->ID.'][protect_from_public_access]" value="1"'.($protect_from_public_access ? ' checked="checked"' : '').' /> ',
+        'value' => $protect_from_public_access,
+        'helps' => $ext == "" ? '<strong>Non &egrave; possibile proteggere il percorso del file dall\'accesso esterno. </strong> Vai in <a href="admin.php?page=setup">Configurazioni</a> e inserisci una o pi&ugrave; estensioni in base ai documenti riservati presenti nei media. Potrai selezionare l\'opzione e rendere accessibile l\'URL solo da utenti registrati' : 'Se l\'estensione del file &egrave; '. $ext .' (estensioni configurabili in <a href="admin.php?page=setup">Configurazioni</a>) e l\'opzione viene selezionata, il percorso del file sar&agrave; accessibile solo da utenti registrati.'
+    );
+	return $form_fields;
+}
+add_filter('attachment_fields_to_edit', 'add_custom_protect_from_public_access_to_attachment_fields_to_edit', null, 2); 
+
+// Save custom checkbox attachment field
+function save_protect_from_public_access_attachment_field($post, $attachment) { 
+    $db_protect_from_public_access = (bool) get_post_meta($post['ID'], 'protect_from_public_access', true);
+
+    if( isset($attachment['protect_from_public_access']) ){  
+        update_post_meta($post['ID'], 'protect_from_public_access', sanitize_text_field( $attachment['protect_from_public_access'] ) );  
+    }else{
+		delete_post_meta($post['ID'], 'protect_from_public_access' );
+    }
+    return $post;
+}
+add_filter('attachment_fields_to_save', 'save_protect_from_public_access_attachment_field', null, 2);
+
+function reserved_file_check(){
+	if($_GET && isset($_GET['action']) && $_GET['action'] == "reservedfilecheck"){
+		$baseurl = wp_get_upload_dir()['baseurl'];
+		$basedir = wp_get_upload_dir()['basedir'];
+		$filename = $baseurl . '/' . $_GET['file'];
+		$filepath = $basedir . '/' . $_GET['file'];
+
+		$fileid = attachment_url_to_postid( $filename );
+
+		if($fileid != 0) {
+			$filedata = get_post($fileid);
+
+			$protect_from_public_access = (bool) get_post_meta($filedata->ID, 'protect_from_public_access', true);
+
+			if($protect_from_public_access && !is_user_logged_in()) 
+				die();
+		}
+
+		if(file_exists($filepath)) {			
+			//Define header information
+			header('Content-Description: File Transfer');
+			header('Content-Type: application/octet-stream');
+			header("Cache-Control: no-cache, must-revalidate");
+			header("Expires: 0");
+			header('Content-Disposition: attachment; filename="'.basename($filepath).'"');
+			header('Content-Length: ' . filesize($filepath));
+			header('Pragma: public');
+
+			ob_clean();
+
+			//Clear system output buffer
+			flush();
+
+			//Read the size of the file
+			readfile($filepath);
+
+			//Terminate from the script
+			die();
+		}
+	}
+}
+add_action( 'init', 'reserved_file_check', 10, 2);
